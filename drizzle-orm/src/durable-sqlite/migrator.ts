@@ -7,12 +7,27 @@ interface MigrationConfig {
 		entries: { idx: number; when: number; tag: string; breakpoints: boolean }[];
 	};
 	migrations: Record<string, string>;
+	to?: string;
 }
 
-function readMigrationFiles({ journal, migrations }: MigrationConfig): MigrationMeta[] {
+function readMigrationFiles({ journal, migrations, to }: MigrationConfig): MigrationMeta[] {
 	const migrationQueries: MigrationMeta[] = [];
 
-	for (const journalEntry of journal.entries) {
+	let entries = journal.entries;
+	if (to) {
+		const target = to.replace(/\.sql$/, '');
+		const targetIdx = entries.findIndex(
+			(entry) => entry.tag === target || entry.tag.startsWith(`${target}_`),
+		);
+
+		if (targetIdx === -1) {
+			throw new Error(`Target migration "${to}" not found in journal`);
+		}
+
+		entries = entries.slice(0, targetIdx + 1);
+	}
+
+	for (const journalEntry of entries) {
 		const query = migrations[`m${journalEntry.idx.toString().padStart(4, '0')}`];
 
 		if (!query) {

@@ -10,6 +10,12 @@ export interface MigrationConfig {
 	migrationsFolder: string;
 	migrationsTable?: string;
 	migrationsSchema?: string;
+	/**
+	 * Target migration tag up to which migrations should be applied (inclusively).
+	 * Supports full tag ('0001_add_users'), tag with extension ('0001_add_users.sql'),
+	 * or tag prefix ('0001').
+	 */
+	to?: string;
 }
 
 export interface MigrationMeta {
@@ -35,7 +41,21 @@ export function readMigrationFiles(config: MigrationConfig): MigrationMeta[] {
 		entries: { idx: number; when: number; tag: string; breakpoints: boolean }[];
 	};
 
-	for (const journalEntry of journal.entries) {
+	let entries = journal.entries;
+	if (config.to) {
+		const target = config.to.replace(/\.sql$/, '');
+		const targetIdx = entries.findIndex(
+			(entry) => entry.tag === target || entry.tag.startsWith(`${target}_`),
+		);
+
+		if (targetIdx === -1) {
+			throw new Error(`Target migration "${config.to}" not found in journal`);
+		}
+
+		entries = entries.slice(0, targetIdx + 1);
+	}
+
+	for (const journalEntry of entries) {
 		const migrationPath = `${migrationFolderTo}/${journalEntry.tag}.sql`;
 
 		try {

@@ -64,12 +64,16 @@ export const generate = command({
 		prefix: string()
 			.enum(...prefixes)
 			.default('index'),
+		only: string().desc('Generate migration only for specific entity type or entity name (e.g. "enums", "tables", or entity name)'),
+		noDrop: boolean('no-drop')
+			.desc('Do not drop any missing/commented-out tables, columns, or enums')
+			.default(false),
 	},
 	transform: async (opts) => {
 		const from = assertCollisions(
 			'generate',
 			opts,
-			['prefix', 'name', 'custom'],
+			['prefix', 'name', 'custom', 'only', 'noDrop'],
 			['driver', 'breakpoints', 'schema', 'out', 'dialect', 'casing'],
 		);
 		return prepareGenerateConfig(opts, from);
@@ -116,15 +120,17 @@ export const migrate = command({
 	name: 'migrate',
 	options: {
 		config: optionConfig,
+		to: string().desc('Target migration tag to migrate to (inclusive)'),
 	},
 	transform: async (opts) => {
-		return await prepareMigrateConfig(opts.config);
+		const config = await prepareMigrateConfig(opts.config);
+		return { ...config, to: opts.to };
 	},
 	handler: async (opts) => {
 		await assertOrmCoreVersion();
 		await assertPackages('drizzle-orm');
 
-		const { dialect, schema, table, out, credentials } = opts;
+		const { dialect, schema, table, out, credentials, to } = opts;
 		try {
 			if (dialect === 'postgresql') {
 				if ('driver' in credentials) {
@@ -155,6 +161,7 @@ export const migrate = command({
 						migrationsFolder: out,
 						migrationsTable: table,
 						migrationsSchema: schema,
+						to,
 					}),
 				);
 			} else if (dialect === 'mysql') {
@@ -166,6 +173,7 @@ export const migrate = command({
 						migrationsFolder: out,
 						migrationsTable: table,
 						migrationsSchema: schema,
+						to,
 					}),
 				);
 			} else if (dialect === 'singlestore') {
@@ -177,6 +185,7 @@ export const migrate = command({
 						migrationsFolder: out,
 						migrationsTable: table,
 						migrationsSchema: schema,
+						to,
 					}),
 				);
 			} else if (dialect === 'sqlite') {
@@ -188,6 +197,7 @@ export const migrate = command({
 						migrationsFolder: opts.out,
 						migrationsTable: table,
 						migrationsSchema: schema,
+						to,
 					}),
 				);
 			} else if (dialect === 'turso') {
@@ -199,6 +209,7 @@ export const migrate = command({
 						migrationsFolder: opts.out,
 						migrationsTable: table,
 						migrationsSchema: schema,
+						to,
 					}),
 				);
 			} else if (dialect === 'gel') {

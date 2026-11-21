@@ -158,6 +158,8 @@ export type GenerateConfig = {
 	bundle: boolean;
 	casing?: CasingType;
 	driver?: Driver;
+	only?: string;
+	noDrop?: boolean;
 };
 
 export type ExportConfig = {
@@ -169,7 +171,7 @@ export type ExportConfig = {
 export const prepareGenerateConfig = async (
 	options: {
 		config?: string;
-		schema?: string;
+		schema?: string | string[];
 		out?: string;
 		breakpoints?: boolean;
 		custom?: boolean;
@@ -178,10 +180,22 @@ export const prepareGenerateConfig = async (
 		driver?: Driver;
 		prefix?: Prefix;
 		casing?: CasingType;
+		only?: string;
+		noDrop?: boolean;
 	},
 	from: 'config' | 'cli',
 ): Promise<GenerateConfig> => {
-	const config = from === 'config' ? await drizzleConfigFromFile(options.config) : options;
+	let config: Partial<CliConfig> & typeof options;
+	if (from === 'config') {
+		config = await drizzleConfigFromFile(options.config);
+	} else {
+		try {
+			const fileConfig = await drizzleConfigFromFile(options.config);
+			config = { ...fileConfig, ...options };
+		} catch {
+			config = options;
+		}
+	}
 
 	const { schema, out, breakpoints, dialect, driver, casing } = config;
 
@@ -213,6 +227,8 @@ export const prepareGenerateConfig = async (
 		bundle: driver === 'expo' || driver === 'durable-sqlite',
 		casing,
 		driver,
+		only: options.only,
+		noDrop: options.noDrop || false,
 	};
 };
 

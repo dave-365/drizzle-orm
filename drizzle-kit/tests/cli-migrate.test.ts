@@ -24,6 +24,7 @@ test('migrate #1', async (t) => {
 		},
 		schema: undefined, // drizzle migrations table schema
 		table: undefined, // drizzle migrations table name
+		to: undefined,
 	});
 });
 
@@ -39,6 +40,7 @@ test('migrate #2', async (t) => {
 		},
 		schema: undefined, // drizzle migrations table schema
 		table: undefined, // drizzle migrations table name
+		to: undefined,
 	});
 });
 
@@ -56,6 +58,7 @@ test('migrate #3', async (t) => {
 		},
 		schema: undefined, // drizzle migrations table schema
 		table: undefined, // drizzle migrations table name
+		to: undefined,
 	});
 });
 
@@ -74,6 +77,7 @@ test('migrate #4', async (t) => {
 		},
 		schema: undefined, // drizzle migrations table schema
 		table: undefined, // drizzle migrations table name
+		to: undefined,
 	});
 });
 
@@ -93,6 +97,22 @@ test('migrate #5', async (t) => {
 		},
 		schema: 'custom', // drizzle migrations table schema
 		table: 'custom', // drizzle migrations table name
+		to: undefined,
+	});
+});
+
+test('migrate with --to', async (t) => {
+	const res = await brotest(migrate, '--to=0001_some_tag');
+	if (res.type !== 'handler') assert.fail(res.type, 'handler');
+	expect(res.options).toStrictEqual({
+		dialect: 'postgresql',
+		out: 'drizzle',
+		credentials: {
+			url: 'postgresql://postgres:postgres@127.0.0.1:5432/db',
+		},
+		schema: undefined,
+		table: undefined,
+		to: '0001_some_tag',
 	});
 });
 

@@ -1427,7 +1427,7 @@ class AlterTypeAddValueConvertor extends Convertor {
 
 		const enumNameWithSchema = schema ? `"${schema}"."${name}"` : `"${name}"`;
 
-		return `ALTER TYPE ${enumNameWithSchema} ADD VALUE '${value}'${before.length ? ` BEFORE '${before}'` : ''};`;
+		return `ALTER TYPE ${enumNameWithSchema} ADD VALUE IF NOT EXISTS '${value}'${before.length ? ` BEFORE '${before}'` : ''};`;
 	}
 }
 

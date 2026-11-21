@@ -299,6 +299,97 @@ export const columnsResolver = async (
 	};
 };
 
+export const preserveMissingPgEntities = (prev: PgSchema, cur: PgSchema): PgSchema => {
+	const result = { ...cur };
+
+	result.schemas = { ...prev.schemas, ...cur.schemas };
+	result.sequences = { ...prev.sequences, ...cur.sequences };
+	result.roles = { ...(prev.roles || {}), ...(cur.roles || {}) };
+	result.policies = { ...(prev.policies || {}), ...(cur.policies || {}) };
+	result.views = { ...prev.views, ...cur.views };
+
+	// Preserve enums
+	const enums: typeof cur.enums = { ...prev.enums };
+	for (const [enumKey, curEnum] of Object.entries(cur.enums)) {
+		if (prev.enums[enumKey]) {
+			const prevValues = prev.enums[enumKey].values;
+			const combinedValues = [...curEnum.values];
+			for (const pv of prevValues) {
+				if (!combinedValues.includes(pv)) {
+					combinedValues.push(pv);
+				}
+			}
+			enums[enumKey] = { ...curEnum, values: combinedValues };
+		} else {
+			enums[enumKey] = curEnum;
+		}
+	}
+	result.enums = enums;
+
+	// Preserve tables
+	const tables: typeof cur.tables = { ...prev.tables };
+	for (const [tableName, curTable] of Object.entries(cur.tables)) {
+		if (prev.tables[tableName]) {
+			const prevTable = prev.tables[tableName];
+			tables[tableName] = {
+				...curTable,
+				columns: { ...prevTable.columns, ...curTable.columns },
+				indexes: { ...prevTable.indexes, ...curTable.indexes },
+				foreignKeys: { ...prevTable.foreignKeys, ...curTable.foreignKeys },
+				compositePrimaryKeys: { ...prevTable.compositePrimaryKeys, ...curTable.compositePrimaryKeys },
+				uniqueConstraints: { ...prevTable.uniqueConstraints, ...curTable.uniqueConstraints },
+				policies: { ...prevTable.policies, ...curTable.policies },
+				checkConstraints: { ...prevTable.checkConstraints, ...curTable.checkConstraints },
+				isRLSEnabled: curTable.isRLSEnabled || prevTable.isRLSEnabled,
+			};
+		} else {
+			tables[tableName] = curTable;
+		}
+	}
+	result.tables = tables;
+
+	return result;
+};
+
+export const filterPgEntitiesByOnly = (prev: PgSchema, cur: PgSchema, only: string): PgSchema => {
+	const trimmedOnly = only.trim().toLowerCase();
+	const result: PgSchema = {
+		...prev,
+		id: cur.id,
+		prevId: cur.prevId,
+		version: cur.version,
+		dialect: cur.dialect,
+	};
+
+	if (trimmedOnly === 'enums' || trimmedOnly === 'enum') {
+		result.enums = { ...cur.enums };
+	} else if (trimmedOnly === 'tables' || trimmedOnly === 'table') {
+		result.tables = { ...cur.tables };
+	} else if (trimmedOnly === 'views' || trimmedOnly === 'view') {
+		result.views = { ...cur.views };
+	} else if (trimmedOnly === 'sequences' || trimmedOnly === 'sequence') {
+		result.sequences = { ...cur.sequences };
+	} else {
+		for (const [key, val] of Object.entries(cur.enums)) {
+			if (key === only || val.name === only) {
+				result.enums = { ...prev.enums, [key]: val };
+			}
+		}
+		for (const [key, val] of Object.entries(cur.tables)) {
+			if (key === only || val.name === only) {
+				result.tables = { ...prev.tables, [key]: val };
+			}
+		}
+		for (const [key, val] of Object.entries(cur.views)) {
+			if (key === only || val.name === only) {
+				result.views = { ...prev.views, [key]: val };
+			}
+		}
+	}
+
+	return result;
+};
+
 export const prepareAndMigratePg = async (config: GenerateConfig) => {
 	const outFolder = config.out;
 	const schemaPath = config.schema;
@@ -318,8 +409,15 @@ export const prepareAndMigratePg = async (config: GenerateConfig) => {
 			casing,
 		);
 
-		const validatedPrev = pgSchema.parse(prev);
-		const validatedCur = pgSchema.parse(cur);
+		let validatedPrev = pgSchema.parse(prev);
+		let validatedCur = pgSchema.parse(cur);
+
+		if (config.noDrop) {
+			validatedCur = preserveMissingPgEntities(validatedPrev, validatedCur);
+		}
+		if (config.only) {
+			validatedCur = filterPgEntitiesByOnly(validatedPrev, validatedCur, config.only);
+		}
 
 		if (config.custom) {
 			writeResult({
@@ -354,9 +452,17 @@ export const prepareAndMigratePg = async (config: GenerateConfig) => {
 			validatedCur,
 		);
 
+		let statements = sqlStatements;
+		if (config.noDrop) {
+			statements = statements.filter((st) => {
+				const upper = st.trim().toUpperCase();
+				return !upper.startsWith('DROP ') && !upper.includes('DROP COLUMN') && !upper.includes('DROP CONSTRAINT');
+			});
+		}
+
 		writeResult({
-			cur,
-			sqlStatements,
+			cur: validatedCur,
+			sqlStatements: statements,
 			journal,
 			outFolder,
 			name: config.name,
@@ -524,6 +630,55 @@ export const prepareMySQLPush = async (
 	}
 };
 
+export const preserveMissingMySqlEntities = (prev: MySqlSchema, cur: MySqlSchema): MySqlSchema => {
+	const result = { ...cur };
+	result.views = { ...(prev.views || {}), ...(cur.views || {}) };
+
+	const tables: typeof cur.tables = { ...prev.tables };
+	for (const [tableName, curTable] of Object.entries(cur.tables)) {
+		if (prev.tables[tableName]) {
+			const prevTable = prev.tables[tableName];
+			tables[tableName] = {
+				...curTable,
+				columns: { ...prevTable.columns, ...curTable.columns },
+				indexes: { ...prevTable.indexes, ...curTable.indexes },
+				foreignKeys: { ...prevTable.foreignKeys, ...curTable.foreignKeys },
+				compositePrimaryKeys: { ...prevTable.compositePrimaryKeys, ...curTable.compositePrimaryKeys },
+				uniqueConstraints: { ...prevTable.uniqueConstraints, ...curTable.uniqueConstraints },
+				checkConstraint: { ...prevTable.checkConstraint, ...curTable.checkConstraint },
+			};
+		} else {
+			tables[tableName] = curTable;
+		}
+	}
+	result.tables = tables;
+	return result;
+};
+
+export const filterMySqlEntitiesByOnly = (prev: MySqlSchema, cur: MySqlSchema, only: string): MySqlSchema => {
+	const trimmedOnly = only.trim().toLowerCase();
+	const result: MySqlSchema = {
+		...prev,
+		id: cur.id,
+		prevId: cur.prevId,
+		version: cur.version,
+		dialect: cur.dialect,
+	};
+
+	if (trimmedOnly === 'tables' || trimmedOnly === 'table') {
+		result.tables = { ...cur.tables };
+	} else if (trimmedOnly === 'views' || trimmedOnly === 'view') {
+		result.views = { ...cur.views };
+	} else {
+		for (const [key, val] of Object.entries(cur.tables)) {
+			if (key === only || val.name === only) {
+				result.tables = { ...prev.tables, [key]: val };
+			}
+		}
+	}
+	return result;
+};
+
 export const prepareAndMigrateMysql = async (config: GenerateConfig) => {
 	const outFolder = config.out;
 	const schemaPath = config.schema;
@@ -540,8 +695,15 @@ export const prepareAndMigrateMysql = async (config: GenerateConfig) => {
 			casing,
 		);
 
-		const validatedPrev = mysqlSchema.parse(prev);
-		const validatedCur = mysqlSchema.parse(cur);
+		let validatedPrev = mysqlSchema.parse(prev);
+		let validatedCur = mysqlSchema.parse(cur);
+
+		if (config.noDrop) {
+			validatedCur = preserveMissingMySqlEntities(validatedPrev, validatedCur);
+		}
+		if (config.only) {
+			validatedCur = filterMySqlEntitiesByOnly(validatedPrev, validatedCur, config.only);
+		}
 
 		if (config.custom) {
 			writeResult({
@@ -570,9 +732,17 @@ export const prepareAndMigrateMysql = async (config: GenerateConfig) => {
 			validatedCur,
 		);
 
+		let resStatements = sqlStatements;
+		if (config.noDrop) {
+			resStatements = resStatements.filter((st) => {
+				const upper = st.trim().toUpperCase();
+				return !upper.startsWith('DROP ') && !upper.includes('DROP COLUMN') && !upper.includes('DROP CONSTRAINT');
+			});
+		}
+
 		writeResult({
-			cur,
-			sqlStatements,
+			cur: validatedCur,
+			sqlStatements: resStatements,
 			journal,
 			_meta,
 			outFolder,
@@ -799,6 +969,60 @@ export const prepareAndExportMysql = async (config: ExportConfig) => {
 	}
 };
 
+export const preserveMissingSqliteEntities = (prev: SQLiteSchema, cur: SQLiteSchema): SQLiteSchema => {
+	const result = { ...cur };
+	result.views = { ...(prev.views || {}), ...(cur.views || {}) };
+
+	const tables: typeof cur.tables = { ...prev.tables };
+	for (const [tableName, curTable] of Object.entries(cur.tables)) {
+		if (prev.tables[tableName]) {
+			const prevTable = prev.tables[tableName];
+			tables[tableName] = {
+				...curTable,
+				columns: { ...prevTable.columns, ...curTable.columns },
+				indexes: { ...prevTable.indexes, ...curTable.indexes },
+				foreignKeys: { ...prevTable.foreignKeys, ...curTable.foreignKeys },
+				compositePrimaryKeys: { ...prevTable.compositePrimaryKeys, ...curTable.compositePrimaryKeys },
+				uniqueConstraints: { ...prevTable.uniqueConstraints, ...curTable.uniqueConstraints },
+				checkConstraints: { ...prevTable.checkConstraints, ...curTable.checkConstraints },
+			};
+		} else {
+			tables[tableName] = curTable;
+		}
+	}
+	result.tables = tables;
+	return result;
+};
+
+export const filterSqliteEntitiesByOnly = (prev: SQLiteSchema, cur: SQLiteSchema, only: string): SQLiteSchema => {
+	const trimmedOnly = only.trim().toLowerCase();
+	const result: SQLiteSchema = {
+		...prev,
+		id: cur.id,
+		prevId: cur.prevId,
+		version: cur.version,
+		dialect: cur.dialect,
+	};
+
+	if (trimmedOnly === 'tables' || trimmedOnly === 'table') {
+		result.tables = { ...cur.tables };
+	} else if (trimmedOnly === 'views' || trimmedOnly === 'view') {
+		result.views = { ...cur.views };
+	} else {
+		for (const [key, val] of Object.entries(cur.tables)) {
+			if (key === only || val.name === only) {
+				result.tables = { ...prev.tables, [key]: val };
+			}
+		}
+		for (const [key, val] of Object.entries(cur.views || {})) {
+			if (key === only || val.name === only) {
+				result.views = { ...(prev.views || {}), [key]: val };
+			}
+		}
+	}
+	return result;
+};
+
 export const prepareAndMigrateSqlite = async (config: GenerateConfig) => {
 	const outFolder = config.out;
 	const schemaPath = config.schema;
@@ -814,8 +1038,15 @@ export const prepareAndMigrateSqlite = async (config: GenerateConfig) => {
 			casing,
 		);
 
-		const validatedPrev = sqliteSchema.parse(prev);
-		const validatedCur = sqliteSchema.parse(cur);
+		let validatedPrev = sqliteSchema.parse(prev);
+		let validatedCur = sqliteSchema.parse(cur);
+
+		if (config.noDrop) {
+			validatedCur = preserveMissingSqliteEntities(validatedPrev, validatedCur);
+		}
+		if (config.only) {
+			validatedCur = filterSqliteEntitiesByOnly(validatedPrev, validatedCur, config.only);
+		}
 
 		if (config.custom) {
 			writeResult({
@@ -845,9 +1076,17 @@ export const prepareAndMigrateSqlite = async (config: GenerateConfig) => {
 			validatedCur,
 		);
 
+		let resStatements = sqlStatements;
+		if (config.noDrop) {
+			resStatements = resStatements.filter((st) => {
+				const upper = st.trim().toUpperCase();
+				return !upper.startsWith('DROP ') && !upper.includes('DROP COLUMN') && !upper.includes('DROP CONSTRAINT');
+			});
+		}
+
 		writeResult({
-			cur,
-			sqlStatements,
+			cur: validatedCur,
+			sqlStatements: resStatements,
 			journal,
 			_meta,
 			outFolder,
@@ -909,8 +1148,15 @@ export const prepareAndMigrateLibSQL = async (config: GenerateConfig) => {
 			casing,
 		);
 
-		const validatedPrev = sqliteSchema.parse(prev);
-		const validatedCur = sqliteSchema.parse(cur);
+		let validatedPrev = sqliteSchema.parse(prev);
+		let validatedCur = sqliteSchema.parse(cur);
+
+		if (config.noDrop) {
+			validatedCur = preserveMissingSqliteEntities(validatedPrev, validatedCur);
+		}
+		if (config.only) {
+			validatedCur = filterSqliteEntitiesByOnly(validatedPrev, validatedCur, config.only);
+		}
 
 		if (config.custom) {
 			writeResult({
@@ -940,9 +1186,17 @@ export const prepareAndMigrateLibSQL = async (config: GenerateConfig) => {
 			validatedCur,
 		);
 
+		let resStatements = sqlStatements;
+		if (config.noDrop) {
+			resStatements = resStatements.filter((st) => {
+				const upper = st.trim().toUpperCase();
+				return !upper.startsWith('DROP ') && !upper.includes('DROP COLUMN') && !upper.includes('DROP CONSTRAINT');
+			});
+		}
+
 		writeResult({
-			cur,
-			sqlStatements,
+			cur: validatedCur,
+			sqlStatements: resStatements,
 			journal,
 			_meta,
 			outFolder,
